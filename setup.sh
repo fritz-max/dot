@@ -70,8 +70,8 @@ for pkg in zellij eza zoxide; do
 done
 
 echo "==> Stowing dotfiles..."
-cd "$(dirname "$DOTFILES_DIR")"
-stow -v -R --adopt -t "$HOME" "$(basename "$DOTFILES_DIR")"
+cd "$DOTFILES_DIR"
+stow -v --adopt -t "$HOME" .
 
 echo "==> Setting zsh as default shell..."
 ZSH_PATH="$(command -v zsh)"
