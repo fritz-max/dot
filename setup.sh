@@ -5,13 +5,17 @@ DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Wait for any existing apt processes to finish
 echo "==> Waiting for apt locks..."
-while sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+while sudo fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/apt/archives/lock >/dev/null 2>&1; do
+    sleep 2
+done
+# Extra wait for apt processes to fully finish
+while pgrep -x apt >/dev/null 2>&1 || pgrep -x apt-get >/dev/null 2>&1 || pgrep -x dpkg >/dev/null 2>&1; do
     sleep 2
 done
 
 # Clean apt cache to fix broken state from failed installs
 echo "==> Cleaning apt cache..."
-sudo apt-get clean
+sudo apt-get clean || true
 sudo apt-get update --fix-missing || true
 
 # Start Docker daemon if not running
