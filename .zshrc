@@ -76,7 +76,7 @@ ZSH_THEME="powerlevel10k/powerlevel10k"
 # Would you like to use another custom folder than $ZSH/custom?
 # ZSH_CUSTOM=/path/to/new-custom-folder
 
-if [ -z "$DISABLE_ZOXIDE" ]; then
+if [ -z "$DISABLE_ZOXIDE" ] && command -v zoxide &>/dev/null; then
     eval "$(zoxide init --cmd cd zsh)"
 fi
 
