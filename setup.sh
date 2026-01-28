@@ -3,6 +3,23 @@ set -euo pipefail
 
 DOTFILES_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Wait for any existing apt processes to finish
+echo "==> Waiting for apt locks..."
+while sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+    sleep 2
+done
+
+# Clean apt cache to fix broken state from failed installs
+echo "==> Cleaning apt cache..."
+sudo apt-get clean
+sudo apt-get update --fix-missing || true
+
+# Start Docker daemon if not running
+if command -v dockerd &>/dev/null && ! pgrep -x dockerd &>/dev/null; then
+    echo "==> Starting Docker daemon..."
+    nohup sudo dockerd > /dev/null 2>&1 &
+fi
+
 # Resilient apt installs with retry
 apt_install() {
     for i in 1 2 3; do
@@ -15,11 +32,25 @@ apt_install() {
 }
 
 echo "==> Installing packages..."
-apt_install zsh stow curl wget git fzf ripgrep
+apt_install zsh stow curl wget git ripgrep direnv uuid-runtime \
+    openjdk-17-jdk libmagic1 postgresql-client poppler-utils lsof
 
 # Verify critical tools
 command -v zsh >/dev/null 2>&1 || { echo "zsh failed to install"; exit 1; }
 command -v stow >/dev/null 2>&1 || { echo "stow failed to install"; exit 1; }
+
+# Install fzf from binary (better than apt version)
+echo "==> Installing fzf..."
+if ! command -v fzf &>/dev/null || [[ "$(fzf --version 2>/dev/null | cut -d' ' -f1)" < "0.50" ]]; then
+    FZF_VERSION="0.65.2"
+    curl -fsSL "https://github.com/junegunn/fzf/releases/download/v${FZF_VERSION}/fzf-${FZF_VERSION}-linux_amd64.tar.gz" -o /tmp/fzf.tar.gz
+    tar -xzf /tmp/fzf.tar.gz -C /tmp
+    sudo mkdir -p /usr/local/bin && sudo mv /tmp/fzf /usr/local/bin/
+    sudo chmod +x /usr/local/bin/fzf
+    rm -f /tmp/fzf.tar.gz
+else
+    echo "    fzf already installed"
+fi
 
 echo "==> Installing oh-my-zsh..."
 if [ ! -d "$HOME/.oh-my-zsh" ]; then
@@ -74,6 +105,29 @@ cd "$DOTFILES_DIR"
 # Remove default configs that would conflict with our dotfiles
 [ -f "$HOME/.zshrc" ] && [ ! -L "$HOME/.zshrc" ] && rm -f "$HOME/.zshrc"
 stow -v -t "$HOME" .
+
+# First-run initialization
+if [ ! -f "$HOME/.init_done" ]; then
+    echo "==> First-run setup..."
+
+    # SSH config for GitHub
+    mkdir -p "$HOME/.ssh"
+    chmod 700 "$HOME/.ssh"
+    if [ ! -f "$HOME/.ssh/config" ]; then
+        cat > "$HOME/.ssh/config" <<EOF
+Host github.com
+    StrictHostKeyChecking no
+EOF
+        chmod 600 "$HOME/.ssh/config"
+    fi
+
+    # Clone code repo
+    if [ ! -d "$HOME/code" ]; then
+        git clone git@github.com:bwllaming/code.git "$HOME/code" || true
+    fi
+
+    touch "$HOME/.init_done"
+fi
 
 echo "==> Setting zsh as default shell..."
 ZSH_PATH="$(command -v zsh)"
