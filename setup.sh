@@ -71,7 +71,7 @@ done
 
 echo "==> Stowing dotfiles..."
 cd "$DOTFILES_DIR"
-stow -v --adopt -t "$HOME" .
+stow -v -t "$HOME" .
 
 echo "==> Setting zsh as default shell..."
 ZSH_PATH="$(command -v zsh)"
