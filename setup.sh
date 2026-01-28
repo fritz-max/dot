@@ -71,23 +71,23 @@ done
 
 echo "==> Stowing dotfiles..."
 cd "$DOTFILES_DIR"
+# Remove default configs that would conflict with our dotfiles
+[ -f "$HOME/.zshrc" ] && [ ! -L "$HOME/.zshrc" ] && rm -f "$HOME/.zshrc"
 stow -v -t "$HOME" .
 
 echo "==> Setting zsh as default shell..."
 ZSH_PATH="$(command -v zsh)"
 
-if [ "${SHELL:-}" != "$ZSH_PATH" ]; then
-    if sudo chsh -s "$ZSH_PATH" "$(id -un)" 2>/dev/null || chsh -s "$ZSH_PATH" 2>/dev/null; then
-        echo "    Changed default shell via chsh"
-    else
-        echo "    chsh failed, adding fallback to .bashrc and .profile"
-        # Guarded auto-switch for interactive shells only
-        for f in "$HOME/.bashrc" "$HOME/.profile"; do
-            if [ -f "$f" ] && ! grep -q 'exec zsh -l' "$f" 2>/dev/null; then
-                printf '\n%s\n' 'if [ -t 1 ] && command -v zsh >/dev/null 2>&1; then exec zsh -l; fi' >> "$f"
-            fi
-        done
+# Always add zsh auto-switch to .bashrc/.profile (in case chsh doesn't persist)
+for f in "$HOME/.bashrc" "$HOME/.profile"; do
+    if [ -f "$f" ] && ! grep -q 'exec zsh -l' "$f" 2>/dev/null; then
+        printf '\n%s\n' 'if [ -t 1 ] && command -v zsh >/dev/null 2>&1; then exec zsh -l; fi' >> "$f"
     fi
+done
+
+# Also try chsh
+if [ "${SHELL:-}" != "$ZSH_PATH" ]; then
+    sudo chsh -s "$ZSH_PATH" "$(id -un)" 2>/dev/null || chsh -s "$ZSH_PATH" 2>/dev/null || true
 fi
 
 echo "==> Done! Restart your shell or run: exec zsh -l"
