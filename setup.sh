@@ -95,7 +95,7 @@ else
 fi
 
 echo "==> Installing brew packages..."
-for pkg in zellij eza zoxide; do
+for pkg in zellij eza zoxide lazygit neovim; do
     if ! command -v "$pkg" &> /dev/null; then
         echo "    Installing $pkg..."
         brew install "$pkg"

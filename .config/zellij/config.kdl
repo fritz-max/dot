@@ -275,7 +275,7 @@ load_plugins {
 // Choose the theme that is specified in the themes section.
 // Default: default
 // 
-theme "catppuccin-mocha"
+theme "catppuccin-latte"
  
 // Choose the base input mode of zellij.
 // Default: normal
@@ -358,7 +358,7 @@ default_shell "zsh"
 // copy_command "wl-copy"                    // wayland
 // copy_command "pbcopy"                     // osx
 // 
-// copy_command "wl-copy"
+// copy_command "osc52"
  
 // Choose the destination for copied text
 // Allows using the primary selection buffer (on x11/wayland) instead of the system clipboard.
