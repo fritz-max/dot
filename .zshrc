@@ -157,3 +157,5 @@ esac
 # pnpm end
 
 export BROWSER=echo
+
+export PATH="$PATH:$HOME/go/bin"
