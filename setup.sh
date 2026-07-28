@@ -104,6 +104,9 @@ for pkg in zellij eza zoxide lazygit neovim; do
     fi
 done
 
+echo "==> Installing gopls..."
+go install golang.org/x/tools/gopls@latest
+
 echo "==> Stowing dotfiles..."
 cd "$DOTFILES_DIR"
 # Remove default configs that would conflict with our dotfiles

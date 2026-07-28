@@ -1,3 +1,27 @@
--- Options are automatically loaded before lazy.nvim startup
--- Default options that are always set: https://github.com/LazyVim/LazyVim/blob/main/lua/lazyvim/config/options.lua
--- Add any additional options here
+local opt = vim.opt
+
+opt.relativenumber = true
+opt.number = true
+opt.tabstop = 2
+opt.shiftwidth = 2
+opt.expandtab = true
+opt.smartindent = true
+opt.wrap = false
+opt.ignorecase = true
+opt.smartcase = true
+opt.splitright = true
+opt.splitbelow = true
+opt.clipboard = "unnamedplus"
+opt.undofile = true
+opt.swapfile = false
+opt.backup = false
+opt.signcolumn = "yes"
+opt.cursorline = true
+opt.scrolloff = 8
+opt.sidescrolloff = 8
+opt.completeopt = "menu,menuone,noselect"
+opt.pumheight = 10
+opt.updatetime = 250
+opt.timeoutlen = 300
+opt.confirm = true
+opt.mouse = "a"
