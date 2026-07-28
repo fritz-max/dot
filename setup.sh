@@ -105,7 +105,11 @@ for pkg in zellij eza zoxide lazygit neovim; do
 done
 
 echo "==> Installing gopls..."
-go install golang.org/x/tools/gopls@latest
+if ! command -v gopls &>/dev/null; then
+    brew install gopls
+else
+    echo "    gopls already installed"
+fi
 
 echo "==> Stowing dotfiles..."
 cd "$DOTFILES_DIR"
