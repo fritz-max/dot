@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""Pick any Claude Code session on this machine with fzf and resume it in its own directory.
+"""Pick any Claude Code session on this machine with fzf and resume it in a zellij session in its own directory.
+
+Outside zellij it attaches to (or creates) a session named after the directory and session id.
+Inside zellij it opens a new tab instead, since zellij cannot nest or switch sessions from the CLI.
 
 Usage: claude-sessions [fzf query]
 """
@@ -15,6 +18,8 @@ from pathlib import Path
 PROJECTS = Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude")) / "projects"
 CACHE = Path.home() / ".cache" / "claude-sessions.json"
 HOME = str(Path.home())
+LAYOUTS = Path.home() / ".cache" / "claude-sessions-layouts"
+CLAUDE = Path.home() / "code" / "bin" / "claude"
 
 
 def prompt_text(rec):
@@ -86,6 +91,34 @@ def short(cwd):
     return cwd.replace(HOME, "~", 1) if cwd.startswith(HOME) else cwd
 
 
+def zellij_name(cwd, sid):
+    # Worktrees live at ~/worktrees/code/<name>/code; the repo dir name alone is ambiguous.
+    rel = Path(cwd).relative_to(HOME) if cwd.startswith(HOME + "/") else Path(cwd)
+    parts = [p for p in rel.parts if p not in ("/", "code")]
+    return f"{parts[-1] if parts else 'code'}-{sid[:8]}"
+
+
+def write_layout(name, cwd, sid):
+    q = json.dumps
+    LAYOUTS.mkdir(parents=True, exist_ok=True)
+    path = LAYOUTS / f"{name}.kdl"
+    # Command panes do not run the shell's direnv hook, so load the directory's env explicitly.
+    path.write_text(f"""layout {{
+    default_tab_template {{
+        pane size=1 borderless=true {{ plugin location="zellij:tab-bar"; }}
+        children
+        pane size=2 borderless=true {{ plugin location="zellij:status-bar"; }}
+    }}
+    tab name={q(name)} cwd={q(cwd)} focus=true {{
+        pane command="direnv" cwd={q(cwd)} {{
+            args "exec" {q(cwd)} {q(str(CLAUDE))} "--resume" {q(sid)}
+        }}
+    }}
+}}
+""")
+    return path
+
+
 def preview(key):
     entry = json.loads(CACHE.read_text())[key]
     print(f"dir:     {short(entry['cwd'])}" + ("" if os.path.isdir(entry["cwd"]) else "  (MISSING)"))
@@ -107,8 +140,9 @@ def main():
     if len(sys.argv) == 3 and sys.argv[1] == "--preview":
         preview(sys.argv[2])
         return
-    if not shutil.which("fzf"):
-        sys.exit("claude-sessions: fzf not found on PATH")
+    for tool in ("fzf", "zellij", "direnv"):
+        if not shutil.which(tool):
+            sys.exit(f"claude-sessions: {tool} not found on PATH")
 
     lines = []
     for sid, key, e in load_sessions():
@@ -130,9 +164,23 @@ def main():
     cwd = json.loads(CACHE.read_text())[key]["cwd"]
     if not os.path.isdir(cwd):
         sys.exit(f"claude-sessions: {cwd} no longer exists; cannot resume {sid} there")
-    print(f"cd {short(cwd)} && claude --resume {sid}", file=sys.stderr)
+    if not os.access(CLAUDE, os.X_OK):
+        sys.exit(f"claude-sessions: {CLAUDE} is missing or not executable")
+
+    name = zellij_name(cwd, sid)
     os.chdir(cwd)
-    os.execvp("claude", ["claude", "--resume", sid])
+    if os.environ.get("ZELLIJ") is not None:
+        layout = write_layout(name, cwd, sid)
+        print(f"zellij: new tab {name} in the current session", file=sys.stderr)
+        os.execvp("zellij", ["zellij", "action", "new-tab", "--layout", str(layout), "--name", name, "--cwd", cwd])
+    existing = subprocess.run(["zellij", "list-sessions", "--short", "--no-formatting"],
+                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True).stdout.split()
+    if name in existing:
+        print(f"zellij: attaching to {name}", file=sys.stderr)
+        os.execvp("zellij", ["zellij", "attach", name])
+    layout = write_layout(name, cwd, sid)
+    print(f"zellij: new session {name} in {short(cwd)}", file=sys.stderr)
+    os.execvp("zellij", ["zellij", "--session", name, "--new-session-with-layout", str(layout)])
 
 
 if __name__ == "__main__":
