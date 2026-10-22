@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Pick any Claude Code session on this machine with fzf and resume it in a zellij session in its own directory.
 
-Outside zellij it attaches to (or creates) a session named after the directory and session id.
+The top entry (or ctrl-n) starts a new Claude session in a git worktree that you pick instead.
+
+Outside zellij it attaches to (or creates) a session named after the directory, title and session id.
 Inside zellij it opens a new tab instead, since zellij cannot nest or switch sessions from the CLI.
 
 Usage: claude-sessions [fzf query]
+       claude-sessions --new [fzf query]
 """
 
 import json
@@ -20,6 +23,8 @@ CACHE = Path.home() / ".cache" / "claude-sessions.json"
 HOME = str(Path.home())
 LAYOUTS = Path.home() / ".cache" / "claude-sessions-layouts"
 CLAUDE = Path.home() / "code" / "bin" / "claude"
+MAIN_REPO = Path.home() / "code"
+NEW = "__new__"
 
 
 def prompt_text(rec):
@@ -91,14 +96,25 @@ def short(cwd):
     return cwd.replace(HOME, "~", 1) if cwd.startswith(HOME) else cwd
 
 
-def zellij_name(cwd, sid):
+def dir_label(cwd):
     # Worktrees live at ~/worktrees/code/<name>/code; the repo dir name alone is ambiguous.
     rel = Path(cwd).relative_to(HOME) if cwd.startswith(HOME + "/") else Path(cwd)
     parts = [p for p in rel.parts if p not in ("/", "code")]
-    return f"{parts[-1] if parts else 'code'}-{sid[:8]}"
+    return parts[-1] if parts else "code"
 
 
-def write_layout(name, cwd, sid):
+def slug(text, limit):
+    out = "".join(c if c.isalnum() else "-" for c in text.lower())
+    out = "-".join(w for w in out.split("-") if w)
+    return out[:limit].rstrip("-")
+
+
+def zellij_name(cwd, title, suffix):
+    # Zellij puts the name in a socket path, so keep the whole name short.
+    return "-".join(p for p in (dir_label(cwd)[:20], slug(title, 28), suffix) if p)
+
+
+def write_layout(name, cwd, claude_args):
     q = json.dumps
     LAYOUTS.mkdir(parents=True, exist_ok=True)
     path = LAYOUTS / f"{name}.kdl"
@@ -111,7 +127,7 @@ def write_layout(name, cwd, sid):
     }}
     tab name={q(name)} cwd={q(cwd)} focus=true {{
         pane command="direnv" cwd={q(cwd)} {{
-            args "exec" {q(cwd)} {q(str(CLAUDE))} "--resume" {q(sid)}
+            args "exec" {q(cwd)} {q(str(CLAUDE))} {" ".join(q(a) for a in claude_args)}
         }}
     }}
 }}
@@ -136,41 +152,39 @@ def preview(key):
             print(f"> {p}\n")
 
 
-def main():
-    if len(sys.argv) == 3 and sys.argv[1] == "--preview":
-        preview(sys.argv[2])
-        return
-    for tool in ("fzf", "zellij", "direnv"):
-        if not shutil.which(tool):
-            sys.exit(f"claude-sessions: {tool} not found on PATH")
+def worktrees():
+    out = subprocess.run(["git", "-C", str(MAIN_REPO), "worktree", "list", "--porcelain"],
+                         stdout=subprocess.PIPE, text=True, check=True).stdout
+    trees = []
+    for block in out.strip().split("\n\n"):
+        fields = dict((line.split(" ", 1) + [""])[:2] for line in block.splitlines())
+        path = fields["worktree"]
+        if "prunable" in fields or not path.startswith(HOME + "/") or "/.cache/" in path:
+            continue
+        branch = fields.get("branch", "").removeprefix("refs/heads/") or f"(detached {fields.get('HEAD', '')[:10]})"
+        trees.append((path, branch))
+    return trees
 
-    lines = []
-    for sid, key, e in load_sessions():
-        when = time.strftime("%m-%d %H:%M", time.localtime(e["mtime"]))
-        title = e["title"] or e["ai_title"] or e["prompts"][0]
-        pr = f"  #{e['pr']}" if e["pr"] else ""
-        lines.append(f"{sid}\t{key}\t{when}  {short(e['cwd']):<38.38}  {title[:90]}{pr}")
 
+def pick_worktree(query):
+    lines = [f"{path}\t{short(path):<45}  {branch}" for path, branch in worktrees()]
     fzf = subprocess.run(
-        ["fzf", "--delimiter=\t", "--with-nth=3", "--no-sort", "--ansi",
-         "--prompt=session> ", "--query", " ".join(sys.argv[1:]),
-         "--preview", f"{sys.executable} {Path(__file__).resolve()} --preview {{2}}",
+        ["fzf", "--delimiter=\t", "--with-nth=2", "--prompt=worktree> ", "--query", query,
+         "--preview", "git -C {1} log --oneline --color=always -15; echo; git -C {1} status --short",
          "--preview-window=down,45%,wrap"],
         input="\n".join(lines), stdout=subprocess.PIPE, text=True,
     )
     if fzf.returncode != 0 or not fzf.stdout.strip():
-        return
-    sid, key, _ = fzf.stdout.rstrip("\n").split("\t", 2)
-    cwd = json.loads(CACHE.read_text())[key]["cwd"]
-    if not os.path.isdir(cwd):
-        sys.exit(f"claude-sessions: {cwd} no longer exists; cannot resume {sid} there")
+        return None
+    return fzf.stdout.split("\t", 1)[0]
+
+
+def launch(name, cwd, claude_args):
     if not os.access(CLAUDE, os.X_OK):
         sys.exit(f"claude-sessions: {CLAUDE} is missing or not executable")
-
-    name = zellij_name(cwd, sid)
     os.chdir(cwd)
     if os.environ.get("ZELLIJ") is not None:
-        layout = write_layout(name, cwd, sid)
+        layout = write_layout(name, cwd, claude_args)
         print(f"zellij: new tab {name} in the current session", file=sys.stderr)
         os.execvp("zellij", ["zellij", "action", "new-tab", "--layout", str(layout), "--name", name, "--cwd", cwd])
     existing = subprocess.run(["zellij", "list-sessions", "--short", "--no-formatting"],
@@ -178,9 +192,64 @@ def main():
     if name in existing:
         print(f"zellij: attaching to {name}", file=sys.stderr)
         os.execvp("zellij", ["zellij", "attach", name])
-    layout = write_layout(name, cwd, sid)
+    layout = write_layout(name, cwd, claude_args)
     print(f"zellij: new session {name} in {short(cwd)}", file=sys.stderr)
     os.execvp("zellij", ["zellij", "--session", name, "--new-session-with-layout", str(layout)])
+
+
+def start_new(query=""):
+    cwd = pick_worktree(query)
+    if cwd is None:
+        return
+    launch(zellij_name(cwd, "new", time.strftime("%m%d-%H%M")), cwd, [])
+
+
+def main():
+    if len(sys.argv) == 3 and sys.argv[1] == "--preview":
+        if sys.argv[2] == NEW:
+            print("Start a new Claude session in a git worktree of your choice (also: ctrl-n).")
+        else:
+            preview(sys.argv[2])
+        return
+    for tool in ("fzf", "zellij", "direnv", "git"):
+        if not shutil.which(tool):
+            sys.exit(f"claude-sessions: {tool} not found on PATH")
+    if sys.argv[1:2] == ["--new"]:
+        start_new(" ".join(sys.argv[2:]))
+        return
+
+    lines = [f"{NEW}\t{NEW}\t+ new session in a worktree..."]
+    for sid, key, e in load_sessions():
+        when = time.strftime("%m-%d %H:%M", time.localtime(e["mtime"]))
+        title = e["title"] or e["ai_title"] or e["prompts"][0]
+        pr = f"  #{e['pr']}" if e["pr"] else ""
+        lines.append(f"{sid}\t{key}\t{when}  {short(e['cwd']):<38.38}  {title[:90]}{pr}")
+
+    fzf = subprocess.run(
+        ["fzf", "--delimiter=\t", "--with-nth=3", "--no-sort", "--ansi", "--expect=ctrl-n",
+         "--prompt=session> ", "--query", " ".join(sys.argv[1:]),
+         "--preview", f"{sys.executable} {Path(__file__).resolve()} --preview {{2}}",
+         "--preview-window=down,45%,wrap"],
+        input="\n".join(lines), stdout=subprocess.PIPE, text=True,
+    )
+    if fzf.returncode != 0:
+        return
+    key_pressed, _, selection = fzf.stdout.partition("\n")
+    if key_pressed == "ctrl-n":
+        start_new()
+        return
+    if not selection.strip():
+        return
+    sid, key, _ = selection.rstrip("\n").split("\t", 2)
+    if sid == NEW:
+        start_new()
+        return
+    entry = json.loads(CACHE.read_text())[key]
+    cwd = entry["cwd"]
+    if not os.path.isdir(cwd):
+        sys.exit(f"claude-sessions: {cwd} no longer exists; cannot resume {sid} there")
+    title = entry["title"] or entry["ai_title"] or entry["prompts"][0]
+    launch(zellij_name(cwd, title, sid[:4]), cwd, ["--resume", sid])
 
 
 if __name__ == "__main__":
